@@ -1,0 +1,6 @@
+{
+  "name": "我的足跡 (My Footprints)",
+  "description": "GPX 軌跡展示、編輯、迷霧模式與路網規劃工具",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
