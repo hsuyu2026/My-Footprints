@@ -8,8 +8,10 @@ import {
   Globe,
   Sun,
   Moon,
+  Compass,
+  Map as MapIcon,
   Type,
-  Layers,
+  Info,
   CloudFog,
   Sliders,
   ChevronDown,
@@ -47,17 +49,19 @@ export const MapToolbar: React.FC<MapToolbarProps> = ({
   const [showStyleMenu, setShowStyleMenu] = useState(false);
   const [showLineMenu, setShowLineMenu] = useState(false);
 
+  // Requirement 1: 排序為 衛星、街道、白晝、夜晚
   const styleOptions: { id: MapStyleType; label: string; icon: React.ReactNode }[] = [
-    { id: 'satellite', label: '衛星 (預設)', icon: <Globe className="w-3.5 h-3.5" /> },
-    { id: 'clean_light', label: '簡潔亮', icon: <Sun className="w-3.5 h-3.5" /> },
-    { id: 'clean_dark', label: '簡潔暗', icon: <Moon className="w-3.5 h-3.5" /> },
+    { id: 'satellite', label: '衛星', icon: <Globe className="w-3.5 h-3.5" /> },
+    { id: 'street', label: '街道', icon: <MapIcon className="w-3.5 h-3.5" /> },
+    { id: 'daylight', label: '白晝', icon: <Sun className="w-3.5 h-3.5" /> },
+    { id: 'night', label: '夜晚', icon: <Moon className="w-3.5 h-3.5" /> },
   ];
 
   const currentStyle = styleOptions.find((s) => s.id === mapStyle) || styleOptions[0];
 
   return (
     <div className="absolute top-4 right-4 z-[450] flex flex-wrap items-center justify-end gap-2">
-      {/* Map Style Selector */}
+      {/* Map Style Selector: 衛星, 街道, 白晝, 夜晚 */}
       <div className="relative">
         <button
           type="button"
@@ -97,7 +101,7 @@ export const MapToolbar: React.FC<MapToolbarProps> = ({
         )}
       </div>
 
-      {/* Line Style Mode Switcher (全白直線 / 交通分色) */}
+      {/* Line Style Mode Switcher */}
       <div className="relative">
         <button
           type="button"
@@ -154,11 +158,11 @@ export const MapToolbar: React.FC<MapToolbarProps> = ({
         )}
       </div>
 
-      {/* Toggle Map Text / Labels */}
+      {/* Requirement 2: 「文字標籤」改為「地名標籤」 */}
       <button
         type="button"
         onClick={onToggleLabels}
-        title="切換地圖文字與地名標籤"
+        title="切換地圖地名與行政區文字標籤"
         className={`flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium backdrop-blur-md transition-colors shadow-lg ${
           showLabels
             ? 'bg-white text-black border-white'
@@ -166,21 +170,21 @@ export const MapToolbar: React.FC<MapToolbarProps> = ({
         }`}
       >
         <Type className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">文字標籤</span>
+        <span className="hidden sm:inline">地名標籤</span>
       </button>
 
-      {/* Toggle Legend */}
+      {/* Requirement 3: 地圖圖例的icon改為代表information的圓框抱著字母i (Info) */}
       <button
         type="button"
         onClick={onToggleLegend}
-        title="顯示/隱藏圖例"
+        title="顯示/隱藏圖例說明"
         className={`flex items-center space-x-1.5 px-3 py-2 border rounded-lg text-xs font-medium backdrop-blur-md transition-colors shadow-lg ${
           showLegend
             ? 'bg-white text-black border-white'
             : 'bg-zinc-950/90 text-zinc-400 border-zinc-800 hover:text-white'
         }`}
       >
-        <Layers className="w-3.5 h-3.5" />
+        <Info className="w-3.5 h-3.5" />
         <span className="hidden sm:inline">圖例</span>
       </button>
 

@@ -31,7 +31,7 @@ interface MapContainerProps {
   onUpdateEditWaypoint: (index: number, lat: number, lon: number) => void;
   editRouteCoords: [number, number][];
   activeTransportType: TransportType;
-  locateTrigger: number; // incremented whenever user triggers a locate action (e.g. date locate or all locate)
+  locateTrigger: number;
 }
 
 export const MapContainer: React.FC<MapContainerProps> = ({
@@ -81,7 +81,7 @@ export const MapContainer: React.FC<MapContainerProps> = ({
     };
   }, []);
 
-  // Map Tile Layers & Labels
+  // Map Tile Layers & Labels (Requirement 1: NO API key required, reliable OSM & Esri)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -97,35 +97,51 @@ export const MapContainer: React.FC<MapContainerProps> = ({
 
     let baseTileUrl = '';
     let labelTileUrl = '';
-    const subdomains = ['a', 'b', 'c', 'd'];
+    let maxZoom = 19;
+    let subdomains: string[] | string = 'abc';
 
     if (mapStyle === 'satellite') {
+      // 衛星：Esri Satellite
       baseTileUrl =
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
       labelTileUrl =
         'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
-    } else if (mapStyle === 'clean_dark') {
-      baseTileUrl = showLabels
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png';
-      labelTileUrl = 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png';
+      subdomains = ['a', 'b', 'c', 'd'];
+      maxZoom = 19;
+    } else if (mapStyle === 'street') {
+      // 街道：OpenStreetMap
+      baseTileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+      labelTileUrl = '';
+      subdomains = ['a', 'b', 'c'];
+      maxZoom = 19;
+    } else if (mapStyle === 'daylight') {
+      // 白晝：Esri Light Gray Canvas
+      baseTileUrl =
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+      labelTileUrl =
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
+      subdomains = ['a', 'b', 'c', 'd'];
+      maxZoom = 16;
     } else {
-      // clean_light
-      baseTileUrl = showLabels
-        ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
-      labelTileUrl = 'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png';
+      // 夜晚：Esri Dark Gray Canvas
+      baseTileUrl =
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+      labelTileUrl =
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
+      subdomains = ['a', 'b', 'c', 'd'];
+      maxZoom = 16;
     }
 
     const baseLayer = L.tileLayer(baseTileUrl, {
-      maxZoom: 19,
+      maxZoom,
       subdomains,
     }).addTo(map);
     baseTileLayerRef.current = baseLayer;
 
-    if (showLabels && mapStyle === 'satellite') {
+    // Optional labels layer for satellite, daylight, and night
+    if (showLabels && labelTileUrl) {
       const labelLayer = L.tileLayer(labelTileUrl, {
-        maxZoom: 19,
+        maxZoom,
         pane: 'overlayPane',
       }).addTo(map);
       labelTileLayerRef.current = labelLayer;
@@ -148,7 +164,7 @@ export const MapContainer: React.FC<MapContainerProps> = ({
     };
   }, [isEditMode, onAddEditWaypoint]);
 
-  // Render Tracks
+  // Render Tracks (Requirement 5: specific colors & alternating patterns)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -159,14 +175,13 @@ export const MapContainer: React.FC<MapContainerProps> = ({
     });
     trackLayersRef.current.clear();
 
-    // REQUIREMENT 1: "開啟此模式（迷霧模式）後不顯示路徑線條"
+    // Hide path lines completely when fog mode is enabled
     if (fogSettings.enabled) {
       return;
     }
 
-    const bounds = L.latLngBounds([]);
-
     tracks.forEach((track) => {
+      // Requirement 6: if not visible (unselected transport or date), do NOT render!
       if (!track.visible || track.points.length === 0) return;
 
       const layerGroup = L.layerGroup();
@@ -176,34 +191,107 @@ export const MapContainer: React.FC<MapContainerProps> = ({
       const isSelected = filterMode === 'single' && track.id === selectedTrackId;
 
       const transportInfo = TRANSPORT_OPTIONS.find((t) => t.type === track.transportType);
-      const weight = isSelected ? 6 : transportInfo?.lineWeight || 4;
-
-      // Color determining: all white vs category colors
-      let lineColor = '#ffffff';
-      if (lineStyleMode === 'category_colors') {
-        lineColor = transportInfo?.color || '#eab308';
-      }
+      const weight = isSelected ? 6.5 : transportInfo?.lineWeight || 4.5;
 
       // Halo backing line for contrast
       const haloLine = L.polyline(latlngs, {
         color: '#000000',
         weight: weight + 3,
-        opacity: 0.8,
+        opacity: 0.85,
         lineCap: 'round',
         lineJoin: 'round',
       });
       layerGroup.addLayer(haloLine);
 
-      // Main line: always solid straight segments (no dash patterns, clean straight lines)
-      const mainLine = L.polyline(latlngs, {
-        color: isSelected ? '#ffffff' : lineColor,
-        weight: weight,
-        opacity: isSelected ? 1 : 0.9,
-        lineCap: 'round',
-        lineJoin: 'round',
-      });
+      // Requirement 5: Color & Pattern Determination
+      if (lineStyleMode === 'monochrome_white') {
+        // Pure solid white lines
+        const whiteLine = L.polyline(latlngs, {
+          color: '#ffffff',
+          weight: weight,
+          opacity: isSelected ? 1 : 0.95,
+          lineCap: 'round',
+          lineJoin: 'round',
+        });
+        layerGroup.addLayer(whiteLine);
+      } else {
+        // Category colors mode
+        const styleType = transportInfo?.lineStyleType || 'solid';
 
-      // Tooltip with track info
+        if (styleType === 'blue_white') {
+          // 捷運：藍白相間
+          const whiteBase = L.polyline(latlngs, {
+            color: '#ffffff',
+            weight: weight,
+            opacity: 1,
+            lineCap: 'butt',
+            lineJoin: 'round',
+          });
+          layerGroup.addLayer(whiteBase);
+
+          const blueDashes = L.polyline(latlngs, {
+            color: '#2563eb',
+            weight: weight,
+            opacity: 1,
+            dashArray: '12, 12',
+            lineCap: 'butt',
+            lineJoin: 'round',
+          });
+          layerGroup.addLayer(blueDashes);
+        } else if (styleType === 'black_white') {
+          // 鐵路：黑白相間
+          const whiteBase = L.polyline(latlngs, {
+            color: '#ffffff',
+            weight: weight,
+            opacity: 1,
+            lineCap: 'butt',
+            lineJoin: 'round',
+          });
+          layerGroup.addLayer(whiteBase);
+
+          const blackDashes = L.polyline(latlngs, {
+            color: '#000000',
+            weight: weight,
+            opacity: 1,
+            dashArray: '12, 12',
+            lineCap: 'butt',
+            lineJoin: 'round',
+          });
+          layerGroup.addLayer(blackDashes);
+        } else if (styleType === 'orange_white') {
+          // 高鐵：橘白相間
+          const whiteBase = L.polyline(latlngs, {
+            color: '#ffffff',
+            weight: weight,
+            opacity: 1,
+            lineCap: 'butt',
+            lineJoin: 'round',
+          });
+          layerGroup.addLayer(whiteBase);
+
+          const orangeDashes = L.polyline(latlngs, {
+            color: '#ea580c',
+            weight: weight,
+            opacity: 1,
+            dashArray: '12, 12',
+            lineCap: 'butt',
+            lineJoin: 'round',
+          });
+          layerGroup.addLayer(orangeDashes);
+        } else {
+          // Solid color line (步行: 淺綠, 腳踏車: 深綠, 機車: 淺藍, 汽車: 深藍, 公車: 亮橘, 輕軌: 淺棕, 飛機: 紫, 船: 紅, 其他: 白)
+          const solidLine = L.polyline(latlngs, {
+            color: transportInfo?.color || '#ffffff',
+            weight: weight,
+            opacity: isSelected ? 1 : 0.95,
+            lineCap: 'round',
+            lineJoin: 'round',
+          });
+          layerGroup.addLayer(solidLine);
+        }
+      }
+
+      // Interaction overlay line for clicks & tooltips
       const displayLabel =
         track.transportType === 'custom' && track.customTransportName
           ? track.customTransportName
@@ -217,51 +305,49 @@ export const MapContainer: React.FC<MapContainerProps> = ({
         </div>
       `;
 
-      mainLine.bindTooltip(tooltipContent, {
+      const interactiveLine = L.polyline(latlngs, {
+        color: 'transparent',
+        weight: weight + 8,
+      });
+
+      interactiveLine.bindTooltip(tooltipContent, {
         sticky: true,
         className: 'custom-leaflet-tooltip',
       });
 
-      mainLine.on('click', (e) => {
+      interactiveLine.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         onSelectTrack(track.id);
       });
 
-      layerGroup.addLayer(mainLine);
+      layerGroup.addLayer(interactiveLine);
 
-      // Add Start & End Markers
+      // Start & End Markers
       if (track.points.length > 1) {
         const startPt = track.points[0];
         const endPt = track.points[track.points.length - 1];
 
-        // Start marker
-        const startColor = lineStyleMode === 'category_colors' ? lineColor : '#ffffff';
+        const markerColor = lineStyleMode === 'category_colors' ? transportInfo?.color || '#ffffff' : '#ffffff';
+
         const startIcon = L.divIcon({
           className: 'custom-marker',
-          html: `<div style="width: 12px; height: 12px; background: ${startColor}; border: 2px solid #000000; border-radius: 50%; box-shadow: 0 0 6px rgba(255,255,255,0.8);"></div>`,
+          html: `<div style="width: 12px; height: 12px; background: ${markerColor}; border: 2px solid #000000; border-radius: 50%; box-shadow: 0 0 6px rgba(255,255,255,0.8);"></div>`,
           iconSize: [12, 12],
           iconAnchor: [6, 6],
         });
-        const startMarker = L.marker([startPt.lat, startPt.lon], { icon: startIcon });
-        layerGroup.addLayer(startMarker);
+        layerGroup.addLayer(L.marker([startPt.lat, startPt.lon], { icon: startIcon }));
 
-        // End marker
         const endIcon = L.divIcon({
           className: 'custom-marker',
-          html: `<div style="width: 12px; height: 12px; background: #000000; border: 2px solid ${startColor}; border-radius: 2px; box-shadow: 0 0 6px rgba(0,0,0,0.8);"></div>`,
+          html: `<div style="width: 12px; height: 12px; background: #000000; border: 2px solid ${markerColor}; border-radius: 2px; box-shadow: 0 0 6px rgba(0,0,0,0.8);"></div>`,
           iconSize: [12, 12],
           iconAnchor: [6, 6],
         });
-        const endMarker = L.marker([endPt.lat, endPt.lon], { icon: endIcon });
-        layerGroup.addLayer(endMarker);
+        layerGroup.addLayer(L.marker([endPt.lat, endPt.lon], { icon: endIcon }));
       }
 
       layerGroup.addTo(map);
       trackLayersRef.current.set(track.id, layerGroup);
-
-      latlngs.forEach((pt) => {
-        bounds.extend(pt);
-      });
     });
   }, [tracks, filterMode, selectedTrackId, onSelectTrack, lineStyleMode, fogSettings.enabled]);
 
@@ -279,7 +365,6 @@ export const MapContainer: React.FC<MapContainerProps> = ({
       }
     }
 
-    // Locate visible tracks (e.g. on date change or initial locate trigger)
     const visibleTracks = tracks.filter((t) => t.visible && t.points.length > 0);
     if (visibleTracks.length > 0) {
       const b = L.latLngBounds([]);
@@ -368,7 +453,7 @@ export const MapContainer: React.FC<MapContainerProps> = ({
     }
   }, [isEditMode, editWaypoints, editRouteCoords, onUpdateEditWaypoint]);
 
-  // Fog of War (迷霧模式) Canvas Rendering Engine
+  // Fog of War Canvas Rendering Engine
   useEffect(() => {
     const map = mapInstanceRef.current;
     const canvas = canvasRef.current;
@@ -403,7 +488,6 @@ export const MapContainer: React.FC<MapContainerProps> = ({
       // 2. Switch to destination-out to carve out the buffer around track points
       ctx.globalCompositeOperation = 'destination-out';
 
-      // Calculate pixel radius for buffer at current map center and zoom level (5m - 500m)
       const center = map.getCenter();
       const pCenter = map.latLngToContainerPoint(center);
       const latDelta = fogSettings.bufferRadiusMeters / 111139;
@@ -413,7 +497,6 @@ export const MapContainer: React.FC<MapContainerProps> = ({
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
-      // Render visible tracks into the fog mask
       const activeTracks =
         isEditMode && editRouteCoords.length > 0
           ? [
@@ -435,7 +518,6 @@ export const MapContainer: React.FC<MapContainerProps> = ({
           screenPoints.push([sp.x, sp.y]);
         }
 
-        // Draw clear buffer stroke along path
         if (screenPoints.length > 1) {
           ctx.beginPath();
           ctx.moveTo(screenPoints[0][0], screenPoints[0][1]);
@@ -447,7 +529,6 @@ export const MapContainer: React.FC<MapContainerProps> = ({
           ctx.stroke();
         }
 
-        // Draw circles at waypoints for clean buffer envelope
         for (let i = 0; i < screenPoints.length; i++) {
           const [sx, sy] = screenPoints[i];
           if (
@@ -465,7 +546,6 @@ export const MapContainer: React.FC<MapContainerProps> = ({
         }
       });
 
-      // Reset composite operation
       ctx.globalCompositeOperation = 'source-over';
     };
 
@@ -484,10 +564,8 @@ export const MapContainer: React.FC<MapContainerProps> = ({
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-black select-none">
-      {/* Map DOM Container */}
       <div ref={mapContainerRef} className="absolute inset-0 z-0 cursor-crosshair" />
 
-      {/* Fog of War Canvas Layer */}
       {fogSettings.enabled && (
         <canvas
           ref={canvasRef}
@@ -495,7 +573,6 @@ export const MapContainer: React.FC<MapContainerProps> = ({
         />
       )}
 
-      {/* Edit Mode Top Banner Instruction */}
       {isEditMode && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-black/90 border border-zinc-700 text-white px-5 py-2.5 rounded-full shadow-2xl backdrop-blur-md flex items-center space-x-3 text-xs tracking-wide">
           <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />

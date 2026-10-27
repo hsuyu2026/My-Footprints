@@ -10,10 +10,12 @@ import {
   MapStyleType,
   FogSettings,
   EditorWaypoint,
+  EditorSegmentConfig,
   TransportType,
   TRANSPORT_OPTIONS,
   LineStyleMode,
   EditRoutingMode,
+  TrackSortOption,
   SavedAppSettings,
 } from './types/footprint';
 import { getDemoTracks } from './utils/demoData';
@@ -27,11 +29,11 @@ import { EditRouteModal } from './components/EditRouteModal';
 import { BackupModal } from './components/BackupModal';
 import { LegendCard } from './components/LegendCard';
 
-const STORAGE_TRACKS_KEY = 'my_footprints_tracks_v2';
-const STORAGE_SETTINGS_KEY = 'my_footprints_settings_v2';
+const STORAGE_TRACKS_KEY = 'my_footprints_tracks_v3';
+const STORAGE_SETTINGS_KEY = 'my_footprints_settings_v3';
 
 export default function App() {
-  // Load saved display settings if any (Requirement 3)
+  // Load saved display settings (Requirement 3)
   const savedSettings = useMemo<Partial<SavedAppSettings>>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_SETTINGS_KEY);
@@ -42,23 +44,43 @@ export default function App() {
     return {};
   }, []);
 
-  // Tracks state
+  // Tracks state (Requirement 4: Instant persistence, never lost on reload)
   const [tracks, setTracks] = useState<GpxTrack[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_TRACKS_KEY);
-      if (saved) {
+      if (saved !== null) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           return parsed;
         }
       }
     } catch (e) {
       console.warn('Failed to load tracks from localStorage:', e);
     }
-    return getDemoTracks();
+    // First time initialization with demo tracks
+    const demo = getDemoTracks();
+    try {
+      localStorage.setItem(STORAGE_TRACKS_KEY, JSON.stringify(demo));
+    } catch (e) {
+      console.warn('Failed to save initial demo tracks:', e);
+    }
+    return demo;
   });
 
-  // Extract custom transport names from tracks
+  // Synchronous persistence helper
+  const updateTracksAndPersist = useCallback((updater: (prev: GpxTrack[]) => GpxTrack[]) => {
+    setTracks((prev) => {
+      const next = updater(prev);
+      try {
+        localStorage.setItem(STORAGE_TRACKS_KEY, JSON.stringify(next));
+      } catch (e) {
+        console.warn('Failed to persist tracks to localStorage:', e);
+      }
+      return next;
+    });
+  }, []);
+
+  // Extract all custom transport names from tracks
   const customTransportNames = useMemo(() => {
     const names = new Set<string>();
     tracks.forEach((t) => {
@@ -69,7 +91,7 @@ export default function App() {
     return Array.from(names);
   }, [tracks]);
 
-  // Display filter states (Requirement 3: Persisted)
+  // Display filter states (Requirement 8: 'single' = 單獨足跡)
   const [filterMode, setFilterMode] = useState<DisplayFilterMode>(
     savedSettings.filterMode || 'all'
   );
@@ -80,7 +102,7 @@ export default function App() {
     return dates.length > 0 ? dates[0] : new Date().toISOString().split('T')[0];
   });
 
-  // Transportation filters (string keys: standard types + custom:Name)
+  // Transportation filters (Requirement 6: hide unselected modes)
   const [activeTransportFilters, setActiveTransportFilters] = useState<string[]>(() => {
     if (savedSettings.activeTransportFilters && savedSettings.activeTransportFilters.length > 0) {
       return savedSettings.activeTransportFilters;
@@ -90,10 +112,15 @@ export default function App() {
     return [...standard, ...customs];
   });
 
-  // Map settings (Default: 衛星 satellite)
-  const [mapStyle, setMapStyle] = useState<MapStyleType>(
-    savedSettings.mapStyle || 'satellite'
-  );
+  // Map settings (Default: 衛星 satellite, 街道 street, 白晝 daylight, 夜晚 night)
+  const [mapStyle, setMapStyle] = useState<MapStyleType>(() => {
+    if (savedSettings.mapStyle) {
+      if ((savedSettings.mapStyle as string) === 'clean_light') return 'street';
+      if ((savedSettings.mapStyle as string) === 'clean_dark') return 'night';
+      return savedSettings.mapStyle;
+    }
+    return 'satellite';
+  });
   const [showLabels, setShowLabels] = useState<boolean>(
     savedSettings.showLabels !== undefined ? savedSettings.showLabels : true
   );
@@ -101,12 +128,12 @@ export default function App() {
     savedSettings.showLegend !== undefined ? savedSettings.showLegend : false
   );
 
-  // Requirement 4: Line style mode (default: monochrome_white)
+  // Requirement 5: Line style mode (default: monochrome_white)
   const [lineStyleMode, setLineStyleMode] = useState<LineStyleMode>(
     savedSettings.lineStyleMode || 'monochrome_white'
   );
 
-  // Requirement 1: Fog settings (default: 50m, 5m-500m)
+  // Fog settings (default: 50m, 5m-500m)
   const [fogSettings, setFogSettings] = useState<FogSettings>(() => {
     if (savedSettings.fogSettings) {
       return {
@@ -124,32 +151,31 @@ export default function App() {
     };
   });
 
-  // Locate trigger (Requirement 6: Fast locating)
+  // Requirement 2: Sorting and Grouping
+  const [sortBy, setSortBy] = useState<TrackSortOption>(
+    savedSettings.sortBy || 'recorded_time'
+  );
+  const [groupByTransport, setGroupByTransport] = useState<boolean>(
+    savedSettings.groupByTransport !== undefined ? savedSettings.groupByTransport : false
+  );
+
+  // Fast locate trigger
   const [locateTrigger, setLocateTrigger] = useState<number>(1);
 
-  // Modal open states
+  // Modals
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
 
-  // Editor Mode State
+  // Requirement 9: Mixed Planning Editor State
   const [isEditMode, setIsEditMode] = useState(false);
-  // Requirement 2: Routing mode ('road_snap' | 'straight_line')
-  const [editRoutingMode, setEditRoutingMode] = useState<EditRoutingMode>('road_snap');
+  const [currentSegmentMode, setCurrentSegmentMode] = useState<EditRoutingMode>('road_snap');
   const [editWaypoints, setEditWaypoints] = useState<EditorWaypoint[]>([]);
+  const [segmentConfigs, setSegmentConfigs] = useState<EditorSegmentConfig[]>([]);
   const [editRouteCoords, setEditRouteCoords] = useState<[number, number][]>([]);
   const [editTotalDistance, setEditTotalDistance] = useState(0);
   const [editTotalDuration, setEditTotalDuration] = useState(0);
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
   const [activeEditTransportType, setActiveEditTransportType] = useState<TransportType>('car');
-
-  // Save tracks to localStorage on change
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_TRACKS_KEY, JSON.stringify(tracks));
-    } catch (e) {
-      console.warn('Failed to save tracks to localStorage:', e);
-    }
-  }, [tracks]);
 
   // Requirement 3: Save user display and filter settings to localStorage on change
   useEffect(() => {
@@ -162,6 +188,8 @@ export default function App() {
       filterMode,
       selectedDate,
       activeTransportFilters,
+      sortBy,
+      groupByTransport,
     };
     try {
       localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(settingsToSave));
@@ -177,9 +205,11 @@ export default function App() {
     filterMode,
     selectedDate,
     activeTransportFilters,
+    sortBy,
+    groupByTransport,
   ]);
 
-  // Make sure new custom transports are automatically added to activeTransportFilters
+  // Auto-sync custom transport options into filter list
   useEffect(() => {
     setActiveTransportFilters((prev) => {
       let changed = false;
@@ -195,26 +225,25 @@ export default function App() {
     });
   }, [customTransportNames]);
 
-  // Filtered tracks for map display
+  // Requirement 6 & 10: Filtered tracks for map display
   const displayedTracks = useMemo(() => {
     return tracks.map((track) => {
       let isVisible = track.visible;
 
-      // Transport mode filter (supports built-in & custom:Name)
-      let isFilteredIn = false;
+      // Transport mode filter (Requirement 6: hide unselected mode)
+      let isTransportAllowed = false;
       if (track.transportType === 'custom' && track.customTransportName?.trim()) {
-        isFilteredIn =
+        isTransportAllowed =
           activeTransportFilters.includes(`custom:${track.customTransportName.trim()}`) ||
           activeTransportFilters.includes('custom');
       } else {
-        isFilteredIn = activeTransportFilters.includes(track.transportType);
+        isTransportAllowed = activeTransportFilters.includes(track.transportType);
       }
-
-      if (!isFilteredIn) {
+      if (!isTransportAllowed) {
         isVisible = false;
       }
 
-      // Display filter mode
+      // Display filter mode (Requirement 10: hide other dates when in 'date' mode)
       if (filterMode === 'single') {
         if (selectedTrackId) {
           isVisible = isVisible && track.id === selectedTrackId;
@@ -230,7 +259,7 @@ export default function App() {
     });
   }, [tracks, filterMode, selectedTrackId, selectedDate, activeTransportFilters]);
 
-  // Requirement 2: Calculate road snapping OR straight line route
+  // Requirement 9: Mixed Route Calculation (segment by segment)
   useEffect(() => {
     if (!isEditMode || editWaypoints.length < 2) {
       if (editWaypoints.length === 1) {
@@ -243,75 +272,105 @@ export default function App() {
       return;
     }
 
-    // Straight line mode
-    if (editRoutingMode === 'straight_line') {
-      const coords: [number, number][] = editWaypoints.map((w) => [w.lat, w.lon]);
-      setEditRouteCoords(coords);
-
-      let totalDist = 0;
-      for (let i = 0; i < coords.length - 1; i++) {
-        totalDist += calculateHaversineDistance(
-          coords[i][0],
-          coords[i][1],
-          coords[i + 1][0],
-          coords[i + 1][1]
-        );
-      }
-      setEditTotalDistance(Math.round(totalDist));
-
-      // Speed estimate based on active transport
-      let speedMps = 1.2;
-      if (activeEditTransportType === 'bicycle') speedMps = 4.2;
-      else if (activeEditTransportType === 'motorcycle') speedMps = 10;
-      else if (activeEditTransportType === 'car') speedMps = 14;
-      setEditTotalDuration(Math.round(totalDist / speedMps));
-      setIsLoadingRoute(false);
-      return;
-    }
-
-    // Road Snap mode: calls OSRM
     let isCancelled = false;
     setIsLoadingRoute(true);
 
-    const timer = setTimeout(() => {
-      fetchRoadRoute(
-        editWaypoints.map((w) => ({ lat: w.lat, lon: w.lon })),
-        activeEditTransportType
-      )
-        .then((res) => {
-          if (!isCancelled) {
-            setEditRouteCoords(res.coordinates);
-            setEditTotalDistance(res.distanceMeters);
-            setEditTotalDuration(res.durationSeconds);
-            setIsLoadingRoute(false);
+    const calculateMixedRoute = async () => {
+      const allCoords: [number, number][] = [];
+      let totalDist = 0;
+      let totalDur = 0;
+
+      for (let i = 0; i < editWaypoints.length - 1; i++) {
+        const p1 = editWaypoints[i];
+        const p2 = editWaypoints[i + 1];
+        const segConfig = segmentConfigs[i];
+        const mode = segConfig ? segConfig.mode : 'road_snap';
+
+        if (mode === 'straight_line') {
+          // Direct straight line
+          const dist = calculateHaversineDistance(p1.lat, p1.lon, p2.lat, p2.lon);
+          totalDist += dist;
+
+          let speedMps = 1.2;
+          if (activeEditTransportType === 'bicycle') speedMps = 4.2;
+          else if (activeEditTransportType === 'motorcycle') speedMps = 10;
+          else if (activeEditTransportType === 'car') speedMps = 14;
+          totalDur += dist / speedMps;
+
+          if (i === 0) {
+            allCoords.push([p1.lat, p1.lon]);
           }
-        })
-        .catch(() => {
-          if (!isCancelled) {
-            setIsLoadingRoute(false);
+          allCoords.push([p2.lat, p2.lon]);
+        } else {
+          // Road Snap via OSRM
+          try {
+            const res = await fetchRoadRoute([p1, p2], activeEditTransportType);
+            totalDist += res.distanceMeters;
+            totalDur += res.durationSeconds;
+
+            if (res.coordinates.length > 0) {
+              if (i === 0) {
+                allCoords.push(...res.coordinates);
+              } else {
+                allCoords.push(...res.coordinates.slice(1));
+              }
+            } else {
+              allCoords.push([p2.lat, p2.lon]);
+            }
+          } catch (e) {
+            // Fallback straight line
+            const dist = calculateHaversineDistance(p1.lat, p1.lon, p2.lat, p2.lon);
+            totalDist += dist;
+            totalDur += dist / 10;
+            allCoords.push([p2.lat, p2.lon]);
           }
-        });
-    }, 200);
+        }
+      }
+
+      if (!isCancelled) {
+        setEditRouteCoords(allCoords);
+        setEditTotalDistance(Math.round(totalDist));
+        setEditTotalDuration(Math.round(totalDur));
+        setIsLoadingRoute(false);
+      }
+    };
+
+    calculateMixedRoute();
 
     return () => {
       isCancelled = true;
-      clearTimeout(timer);
     };
-  }, [isEditMode, editWaypoints, activeEditTransportType, editRoutingMode]);
+  }, [isEditMode, editWaypoints, segmentConfigs, activeEditTransportType]);
 
-  // Handlers for Edit Waypoints
-  const handleAddEditWaypoint = useCallback((lat: number, lon: number) => {
-    setEditWaypoints((prev) => {
-      const role: EditorWaypoint['role'] = prev.length === 0 ? 'start' : 'waypoint';
-      const newWp: EditorWaypoint = {
-        id: 'wp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-        lat,
-        lon,
-        role,
-      };
-      return [...prev, newWp];
-    });
-  }, []);
+  // Requirement 9: Adding waypoints & initializing segment configs
+  const handleAddEditWaypoint = useCallback(
+    (lat: number, lon: number) => {
+      setEditWaypoints((prev) => {
+        const role: EditorWaypoint['role'] = prev.length === 0 ? 'start' : 'waypoint';
+        const newWp: EditorWaypoint = {
+          id: 'wp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+          lat,
+          lon,
+          role,
+        };
+
+        if (prev.length >= 1) {
+          // Add segment config connecting prev point to this new point
+          setSegmentConfigs((prevSegs) => [
+            ...prevSegs,
+            {
+              fromIndex: prev.length - 1,
+              toIndex: prev.length,
+              mode: currentSegmentMode,
+            },
+          ]);
+        }
+
+        return [...prev, newWp];
+      });
+    },
+    [currentSegmentMode]
+  );
 
   const handleUpdateEditWaypoint = useCallback(
     (index: number, lat: number, lon: number) => {
@@ -328,18 +387,34 @@ export default function App() {
 
   const handleRemoveEditWaypoint = useCallback((index: number) => {
     setEditWaypoints((prev) => prev.filter((_, i) => i !== index));
+    setSegmentConfigs((prev) => prev.filter((_, i) => i !== index && i !== index - 1));
   }, []);
 
   const handleClearEditWaypoints = useCallback(() => {
     setEditWaypoints([]);
+    setSegmentConfigs([]);
     setEditRouteCoords([]);
     setEditTotalDistance(0);
     setEditTotalDuration(0);
   }, []);
 
-  // Track manipulation handlers
+  // Requirement 9: Toggle segment mode (road_snap <-> straight_line)
+  const handleToggleSegmentMode = useCallback((segmentIndex: number) => {
+    setSegmentConfigs((prev) => {
+      const next = [...prev];
+      if (next[segmentIndex]) {
+        next[segmentIndex] = {
+          ...next[segmentIndex],
+          mode: next[segmentIndex].mode === 'road_snap' ? 'straight_line' : 'road_snap',
+        };
+      }
+      return next;
+    });
+  }, []);
+
+  // Requirement 4: Synchronous instant storage on import
   const handleImportSuccess = (newTrack: GpxTrack) => {
-    setTracks((prev) => [newTrack, ...prev]);
+    updateTracksAndPersist((prev) => [newTrack, ...prev]);
     if (filterMode === 'single') {
       setSelectedTrackId(newTrack.id);
     }
@@ -347,13 +422,13 @@ export default function App() {
   };
 
   const handleToggleTrackVisibility = (trackId: string) => {
-    setTracks((prev) =>
+    updateTracksAndPersist((prev) =>
       prev.map((t) => (t.id === trackId ? { ...t, visible: !t.visible } : t))
     );
   };
 
   const handleDeleteTrack = (trackId: string) => {
-    setTracks((prev) => prev.filter((t) => t.id !== trackId));
+    updateTracksAndPersist((prev) => prev.filter((t) => t.id !== trackId));
     if (selectedTrackId === trackId) {
       setSelectedTrackId(null);
     }
@@ -369,7 +444,6 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // Requirement 8: Transportation filter toggles
   const handleToggleTransportFilter = (filterKey: string) => {
     setActiveTransportFilters((prev) =>
       prev.includes(filterKey) ? prev.filter((t) => t !== filterKey) : [...prev, filterKey]
@@ -386,29 +460,25 @@ export default function App() {
     setActiveTransportFilters([]);
   };
 
-  // Backup handlers
   const handleRestoreBackup = (importedTracks: GpxTrack[], mode: 'merge' | 'replace') => {
-    if (mode === 'replace') {
-      setTracks(importedTracks);
-    } else {
-      setTracks((prev) => {
-        const existingIds = new Set(prev.map((t) => t.id));
-        const newOnes = importedTracks.filter((t) => !existingIds.has(t.id));
-        return [...newOnes, ...prev];
-      });
-    }
+    updateTracksAndPersist((prev) => {
+      if (mode === 'replace') return importedTracks;
+      const existingIds = new Set(prev.map((t) => t.id));
+      const newOnes = importedTracks.filter((t) => !existingIds.has(t.id));
+      return [...newOnes, ...prev];
+    });
     setLocateTrigger((c) => c + 1);
   };
 
   const handleLoadDemoTracks = () => {
-    setTracks(getDemoTracks());
+    const demos = getDemoTracks();
+    updateTracksAndPersist(() => demos);
     setSelectedTrackId(null);
     setLocateTrigger((c) => c + 1);
   };
 
-  // Save from Edit Route Modal
   const handleSaveAndImportRoute = (newTrack: GpxTrack) => {
-    setTracks((prev) => [newTrack, ...prev]);
+    updateTracksAndPersist((prev) => [newTrack, ...prev]);
     if (filterMode === 'single') {
       setSelectedTrackId(newTrack.id);
     }
@@ -417,7 +487,6 @@ export default function App() {
     setLocateTrigger((c) => c + 1);
   };
 
-  // Requirement 6: Quick locate current view (e.g. for specific date or all)
   const handleLocateCurrentView = useCallback(() => {
     setLocateTrigger((c) => c + 1);
   }, []);
@@ -450,6 +519,10 @@ export default function App() {
           }
         }}
         onLocateCurrentView={handleLocateCurrentView}
+        sortBy={sortBy}
+        onChangeSortBy={setSortBy}
+        groupByTransport={groupByTransport}
+        onToggleGroupByTransport={() => setGroupByTransport(!groupByTransport)}
       />
 
       {/* Main Map View Area */}
@@ -500,6 +573,10 @@ export default function App() {
         <EditRouteModal
           isOpen={isEditMode}
           waypoints={editWaypoints}
+          segmentConfigs={segmentConfigs}
+          onToggleSegmentMode={handleToggleSegmentMode}
+          currentSegmentMode={currentSegmentMode}
+          onChangeCurrentSegmentMode={setCurrentSegmentMode}
           routeCoords={editRouteCoords}
           totalDistanceMeters={editTotalDistance}
           totalDurationSeconds={editTotalDuration}
@@ -513,8 +590,6 @@ export default function App() {
           onSaveAndImport={handleSaveAndImportRoute}
           activeTransportType={activeEditTransportType}
           onChangeTransportType={setActiveEditTransportType}
-          routingMode={editRoutingMode}
-          onChangeRoutingMode={setEditRoutingMode}
         />
       </main>
 

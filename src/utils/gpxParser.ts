@@ -4,6 +4,7 @@
  */
 
 import { GpxTrack, TrackPoint, TransportCategory, TransportType } from '../types/footprint';
+import { douglasPeucker } from './douglasPeucker';
 
 /**
  * Calculates distance between two coordinates in meters using Haversine formula
@@ -32,7 +33,9 @@ export function parseGpxXml(
   fileName: string,
   category: TransportCategory,
   transportType: TransportType,
-  customTransportName?: string
+  customTransportName?: string,
+  applyDouglasPeucker: boolean = false,
+  douglasPeuckerEpsilon: number = 5
 ): GpxTrack {
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlContent, 'application/xml');
@@ -104,6 +107,11 @@ export function parseGpxXml(
     throw new Error('未在此 GPX 檔案中偵測到任何有效的經緯度座標點');
   }
 
+  // Requirement 4: Apply Douglas-Peucker algorithm to filter small GPS drifts and noise
+  const finalPoints = applyDouglasPeucker
+    ? douglasPeucker(points, douglasPeuckerEpsilon)
+    : points;
+
   // Calculate bounding box and distance
   let minLat = 90;
   let maxLat = -90;
@@ -111,23 +119,23 @@ export function parseGpxXml(
   let maxLon = -180;
   let totalDistanceMeters = 0;
 
-  for (let i = 0; i < points.length; i++) {
-    const p = points[i];
+  for (let i = 0; i < finalPoints.length; i++) {
+    const p = finalPoints[i];
     if (p.lat < minLat) minLat = p.lat;
     if (p.lat > maxLat) maxLat = p.lat;
     if (p.lon < minLon) minLon = p.lon;
     if (p.lon > maxLon) maxLon = p.lon;
 
     if (i > 0) {
-      const prev = points[i - 1];
+      const prev = finalPoints[i - 1];
       totalDistanceMeters += calculateHaversineDistance(prev.lat, prev.lon, p.lat, p.lon);
     }
   }
 
   // Determine date and time
   const metaTimeEl = xmlDoc.querySelector('metadata > time');
-  const firstPointWithTime = points.find((p) => p.time);
-  const lastPointWithTime = [...points].reverse().find((p) => p.time);
+  const firstPointWithTime = finalPoints.find((p) => p.time);
+  const lastPointWithTime = [...finalPoints].reverse().find((p) => p.time);
 
   let recordedDate = '';
   let startTime = firstPointWithTime?.time;
@@ -187,7 +195,7 @@ export function parseGpxXml(
     endTime,
     totalDistanceMeters: Math.round(totalDistanceMeters),
     totalDurationSeconds,
-    points,
+    points: finalPoints,
     rawGpxXml: xmlContent,
     bounds: { minLat, maxLat, minLon, maxLon },
     visible: true,

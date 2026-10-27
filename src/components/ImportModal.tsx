@@ -49,6 +49,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [fileName, setFileName] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [applyDouglasPeucker, setApplyDouglasPeucker] = useState(false);
+  const [peuckerEpsilon, setPeuckerEpsilon] = useState<number>(5);
+
   if (!isOpen) return null;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -90,7 +93,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         fileName || 'imported_track.gpx',
         selectedCategory,
         selectedType,
-        customTransportName.trim()
+        customTransportName.trim(),
+        applyDouglasPeucker,
+        peuckerEpsilon
       );
 
       if (trackNameOverride.trim()) {
@@ -278,6 +283,56 @@ export const ImportModal: React.FC<ImportModalProps> = ({
               />
             </div>
           )}
+
+          {/* Requirement 4: Douglas-Peucker Algorithm noise & drift cleaning toggle */}
+          <div className="p-3 bg-zinc-900/60 border border-zinc-800 rounded-lg space-y-2">
+            <div
+              onClick={() => setApplyDouglasPeucker(!applyDouglasPeucker)}
+              className="flex items-start space-x-2.5 cursor-pointer select-none"
+            >
+              <div className="pt-0.5">
+                {applyDouglasPeucker ? (
+                  <div className="w-3.5 h-3.5 bg-white border border-white rounded-[2px] shrink-0" />
+                ) : (
+                  <div className="w-3.5 h-3.5 bg-transparent border border-zinc-500 rounded-[2px] shrink-0" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-white">
+                  以 Douglas-Peucker Algorithm 清理小型飄移與雜訊
+                </div>
+                <div className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                  過濾 GPS 定位微幅跳動與靜止漂移雜訊，保留關鍵折點並使軌跡更加平順精確
+                </div>
+              </div>
+            </div>
+
+            {applyDouglasPeucker && (
+              <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between text-[11px]">
+                <span className="text-zinc-400">容差半徑閾值：</span>
+                <div className="flex space-x-1.5">
+                  {[
+                    { label: '3 公尺 (精緻)', val: 3 },
+                    { label: '5 公尺 (建議)', val: 5 },
+                    { label: '10 公尺 (平滑)', val: 10 },
+                  ].map((opt) => (
+                    <button
+                      key={opt.val}
+                      type="button"
+                      onClick={() => setPeuckerEpsilon(opt.val)}
+                      className={`px-2.5 py-1 rounded text-[10px] transition-colors ${
+                        peuckerEpsilon === opt.val
+                          ? 'bg-white text-black font-semibold'
+                          : 'bg-zinc-800 text-zinc-300 hover:text-white'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
 
           {errorMessage && (
             <div className="p-3 bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-lg">

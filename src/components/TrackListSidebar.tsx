@@ -33,7 +33,8 @@ import {
   Plane,
   Ship,
   Navigation,
-  Check,
+  ArrowUpDown,
+  FolderTree,
   AlertTriangle,
 } from 'lucide-react';
 import {
@@ -41,6 +42,7 @@ import {
   DisplayFilterMode,
   TransportType,
   TRANSPORT_OPTIONS,
+  TrackSortOption,
 } from '../types/footprint';
 
 interface TrackListSidebarProps {
@@ -51,7 +53,7 @@ interface TrackListSidebarProps {
   onSelectTrack: (trackId: string | null) => void;
   selectedDate: string;
   onChangeSelectedDate: (date: string) => void;
-  activeTransportFilters: string[]; // supports standard types and 'custom:Name'
+  activeTransportFilters: string[];
   onToggleTransportFilter: (filterKey: string) => void;
   onSelectAllTransportFilters: () => void;
   onClearAllTransportFilters: () => void;
@@ -63,6 +65,10 @@ interface TrackListSidebarProps {
   isEditMode: boolean;
   onToggleEditMode: () => void;
   onLocateCurrentView: () => void;
+  sortBy: TrackSortOption;
+  onChangeSortBy: (sort: TrackSortOption) => void;
+  groupByTransport: boolean;
+  onToggleGroupByTransport: () => void;
 }
 
 export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
@@ -85,10 +91,14 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
   isEditMode,
   onToggleEditMode,
   onLocateCurrentView,
+  sortBy,
+  onChangeSortBy,
+  groupByTransport,
+  onToggleGroupByTransport,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showTransportFilterPanel, setShowTransportFilterPanel] = useState(false);
-  // Safe in-UI track deletion state (replaces window.confirm which is blocked in iframes)
+  const [showSortMenu, setShowSortMenu] = useState(false);
   const [trackPendingDelete, setTrackPendingDelete] = useState<GpxTrack | null>(null);
 
   // Available unique dates sorted descending
@@ -97,7 +107,7 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
     return dates;
   }, [tracks]);
 
-  // Requirement 8: Extract all custom transport names from imported tracks
+  // Extract all custom transport names from imported tracks
   const customTransportOptions = useMemo(() => {
     const names = new Set<string>();
     tracks.forEach((t) => {
@@ -108,19 +118,97 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
     return Array.from(names);
   }, [tracks]);
 
-  // Overall Statistics
-  const totalStats = useMemo(() => {
-    let distance = 0;
-    let duration = 0;
-    tracks.forEach((t) => {
-      distance += t.totalDistanceMeters;
-      duration += t.totalDurationSeconds;
+  // Filter tracks by transport and date
+  const filteredTracks = useMemo(() => {
+    return tracks.filter((track) => {
+      // Requirement 6: Hide unselected transport modes
+      let isTransportAllowed = false;
+      if (track.transportType === 'custom' && track.customTransportName?.trim()) {
+        isTransportAllowed =
+          activeTransportFilters.includes(`custom:${track.customTransportName.trim()}`) ||
+          activeTransportFilters.includes('custom');
+      } else {
+        isTransportAllowed = activeTransportFilters.includes(track.transportType);
+      }
+      if (!isTransportAllowed) return false;
+
+      // Requirement 10: Hide other dates when specific date mode is active
+      if (filterMode === 'date') {
+        return track.recordedDate === selectedDate;
+      }
+
+      return true;
+    });
+  }, [tracks, activeTransportFilters, filterMode, selectedDate]);
+
+  // Requirement 2: Sort filtered tracks
+  const sortedTracks = useMemo(() => {
+    const list = [...filteredTracks];
+    if (sortBy === 'recorded_time') {
+      list.sort((a, b) => {
+        const timeA = a.startTime ? new Date(a.startTime).getTime() : new Date(a.recordedDate).getTime();
+        const timeB = b.startTime ? new Date(b.startTime).getTime() : new Date(b.recordedDate).getTime();
+        return timeB - timeA;
+      });
+    } else {
+      // Import time (createdAt)
+      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
+    return list;
+  }, [filteredTracks, sortBy]);
+
+  // Requirement 2: Group by transportation mode with dividers
+  const groupedTracks = useMemo(() => {
+    if (!groupByTransport) return null;
+
+    const map = new Map<string, { label: string; icon: TransportType; tracks: GpxTrack[]; distanceMeters: number }>();
+
+    sortedTracks.forEach((t) => {
+      const key = t.transportType === 'custom' && t.customTransportName ? `custom_${t.customTransportName}` : t.transportType;
+      const label = t.transportType === 'custom' && t.customTransportName ? `其他：${t.customTransportName}` : (TRANSPORT_OPTIONS.find((o) => o.type === t.transportType)?.label || '其他');
+
+      if (!map.has(key)) {
+        map.set(key, { label, icon: t.transportType, tracks: [], distanceMeters: 0 });
+      }
+      const entry = map.get(key)!;
+      entry.tracks.push(t);
+      entry.distanceMeters += t.totalDistanceMeters;
+    });
+
+    return Array.from(map.values());
+  }, [sortedTracks, groupByTransport]);
+
+  // Overall & Filter-specific statistics (Requirement 11)
+  const currentModeStats = useMemo(() => {
+    if (filterMode === 'single') {
+      const selected = tracks.find((t) => t.id === selectedTrackId);
+      return {
+        trackName: selected ? selected.name : '未選擇足跡',
+        distanceKm: selected ? (selected.totalDistanceMeters / 1000).toFixed(2) : '0.00',
+        count: selected ? 1 : 0,
+      };
+    }
+    if (filterMode === 'date') {
+      let totalMeters = 0;
+      filteredTracks.forEach((t) => {
+        totalMeters += t.totalDistanceMeters;
+      });
+      return {
+        date: selectedDate,
+        distanceKm: (totalMeters / 1000).toFixed(2),
+        count: filteredTracks.length,
+      };
+    }
+    // All tracks
+    let allMeters = 0;
+    filteredTracks.forEach((t) => {
+      allMeters += t.totalDistanceMeters;
     });
     return {
-      count: tracks.length,
-      distanceKm: (distance / 1000).toFixed(1),
+      distanceKm: (allMeters / 1000).toFixed(2),
+      count: filteredTracks.length,
     };
-  }, [tracks]);
+  }, [filterMode, selectedTrackId, selectedDate, tracks, filteredTracks]);
 
   const getTransportIcon = (type: TransportType) => {
     switch (type) {
@@ -152,8 +240,104 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
     if (mode !== 'single') {
       onSelectTrack(null);
     }
-    // Auto locate on mode change
     setTimeout(onLocateCurrentView, 100);
+  };
+
+  const renderTrackItem = (track: GpxTrack) => {
+    const isSelected = filterMode === 'single' && track.id === selectedTrackId;
+
+    return (
+      <div
+        key={track.id}
+        onClick={() => {
+          if (filterMode === 'single') {
+            onSelectTrack(track.id);
+          }
+        }}
+        className={`group relative p-3 rounded-lg border transition-all cursor-pointer ${
+          isSelected
+            ? 'bg-zinc-900 border-white shadow-md'
+            : 'bg-zinc-900/40 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-900/70'
+        }`}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex items-start space-x-2.5 min-w-0">
+            <div className="w-6 h-6 rounded bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0 mt-0.5 text-zinc-200">
+              {getTransportIcon(track.transportType)}
+            </div>
+
+            <div className="min-w-0">
+              <h4 className="text-xs font-semibold text-white truncate group-hover:text-zinc-100">
+                {track.name}
+              </h4>
+              <div className="flex items-center space-x-2 text-[10px] text-zinc-400 mt-0.5">
+                <span>{track.recordedDate}</span>
+                <span>·</span>
+                <span>{getTransportLabel(track)}</span>
+              </div>
+              <div className="text-[11px] font-mono text-zinc-300 mt-1">
+                {(track.totalDistanceMeters / 1000).toFixed(2)} km
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-1 shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleTrackVisibility(track.id);
+              }}
+              title={track.visible ? '隱藏此足跡' : '顯示此足跡'}
+              className={`p-1 rounded text-zinc-400 hover:text-white transition-colors ${
+                track.visible ? 'text-zinc-300' : 'text-zinc-600'
+              }`}
+            >
+              {track.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (filterMode !== 'single') {
+                  onChangeFilterMode('single');
+                }
+                onSelectTrack(track.id);
+              }}
+              title="定位並查看此足跡"
+              className="p-1 rounded text-zinc-400 hover:text-white transition-colors"
+            >
+              <Crosshair className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDownloadTrack(track);
+              }}
+              title="下載 GPX 檔案"
+              className="p-1 rounded text-zinc-400 hover:text-white transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setTrackPendingDelete(track);
+              }}
+              title="刪除"
+              className="p-1 rounded text-zinc-500 hover:text-white transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -231,9 +415,9 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
         {!isCollapsed && (
           <div className="p-3 border-b border-zinc-800 space-y-2.5">
             <div className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">
-              展示篩選模式 (1-2-a)
+              展示篩選模式
             </div>
-            {/* Mode Switcher */}
+            {/* Requirement 8: Mode Switcher (「單獨足跡」) */}
             <div className="grid grid-cols-3 gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800 text-xs">
               <button
                 type="button"
@@ -255,7 +439,7 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                單獨一份
+                單獨足跡
               </button>
               <button
                 type="button"
@@ -270,7 +454,22 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
               </button>
             </div>
 
-            {/* Requirement 6: Quick locate and date selector if 'date' mode */}
+            {/* Requirement 11: Single Track Mode Total Distance Banner */}
+            {filterMode === 'single' && (
+              <div className="p-2.5 bg-zinc-900 border border-zinc-800 rounded-lg space-y-1">
+                <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                  <span>單獨足跡檢視</span>
+                  <span className="font-mono text-white text-xs font-bold">
+                    總里程：{currentModeStats.distanceKm} km
+                  </span>
+                </div>
+                <div className="text-xs text-zinc-200 font-medium truncate">
+                  {currentModeStats.trackName || '尚未點選特定足跡'}
+                </div>
+              </div>
+            )}
+
+            {/* Date Picker if 'date' mode */}
             {filterMode === 'date' && (
               <div className="pt-1 space-y-1">
                 <div className="flex items-center justify-between text-[11px] text-zinc-400">
@@ -281,7 +480,7 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
                     className="flex items-center space-x-1 text-zinc-300 hover:text-white"
                   >
                     <Crosshair className="w-3 h-3" />
-                    <span>快速定位此日軌跡</span>
+                    <span>快速定位此日</span>
                   </button>
                 </div>
                 <div className="flex space-x-1.5">
@@ -318,10 +517,26 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
                     <Crosshair className="w-4 h-4" />
                   </button>
                 </div>
+
+                {/* Requirement 11: Date Mode Total Distance Display */}
+                <div className="mt-2 p-2.5 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-zinc-400">該日總足跡數</div>
+                    <div className="text-xs font-semibold text-white mt-0.5">
+                      {currentModeStats.count} 筆
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] text-zinc-400">該日總里程</div>
+                    <div className="text-sm font-bold text-white font-mono mt-0.5">
+                      {currentModeStats.distanceKm} km
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* Transportation Filter Accordion (Requirement 8 included) */}
+            {/* Requirement 7: Solid/Hollow Square Custom Checkboxes */}
             <div className="pt-1">
               <button
                 type="button"
@@ -330,9 +545,7 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
               >
                 <div className="flex items-center space-x-1.5">
                   <Filter className="w-3 h-3 text-zinc-400" />
-                  <span>
-                    交通方式篩選 ({activeTransportFilters.length} 項啟用)
-                  </span>
+                  <span>交通方式篩選 ({activeTransportFilters.length} 項啟用)</span>
                 </div>
                 {showTransportFilterPanel ? (
                   <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
@@ -364,54 +577,88 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
                     {TRANSPORT_OPTIONS.filter((t) => t.type !== 'custom').map((opt) => {
                       const isChecked = activeTransportFilters.includes(opt.type);
                       return (
-                        <label
+                        <div
                           key={opt.type}
-                          className="flex items-center space-x-1.5 text-[11px] text-zinc-300 hover:text-white cursor-pointer py-0.5"
+                          onClick={() => onToggleTransportFilter(opt.type)}
+                          className="flex items-center space-x-2 text-[11px] text-zinc-300 hover:text-white cursor-pointer py-0.5 select-none"
                         >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => onToggleTransportFilter(opt.type)}
-                            className="accent-white rounded"
-                          />
+                          {/* Requirement 7: Solid white square if selected, hollow if unselected */}
+                          {isChecked ? (
+                            <div className="w-3.5 h-3.5 bg-white border border-white rounded-[2px] shrink-0" />
+                          ) : (
+                            <div className="w-3.5 h-3.5 bg-transparent border border-zinc-500 rounded-[2px] shrink-0" />
+                          )}
                           <span className="truncate">{opt.label}</span>
-                        </label>
+                        </div>
                       );
                     })}
 
-                    {/* Standard custom option fallback */}
-                    <label className="flex items-center space-x-1.5 text-[11px] text-zinc-300 hover:text-white cursor-pointer py-0.5">
-                      <input
-                        type="checkbox"
-                        checked={activeTransportFilters.includes('custom')}
-                        onChange={() => onToggleTransportFilter('custom')}
-                        className="accent-white rounded"
-                      />
+                    {/* Standard custom option */}
+                    <div
+                      onClick={() => onToggleTransportFilter('custom')}
+                      className="flex items-center space-x-2 text-[11px] text-zinc-300 hover:text-white cursor-pointer py-0.5 select-none"
+                    >
+                      {activeTransportFilters.includes('custom') ? (
+                        <div className="w-3.5 h-3.5 bg-white border border-white rounded-[2px] shrink-0" />
+                      ) : (
+                        <div className="w-3.5 h-3.5 bg-transparent border border-zinc-500 rounded-[2px] shrink-0" />
+                      )}
                       <span className="truncate">其他（自訂通用）</span>
-                    </label>
+                    </div>
 
-                    {/* Requirement 8: User-entered custom transport names */}
+                    {/* User-entered custom transport names */}
                     {customTransportOptions.map((customName) => {
                       const filterKey = `custom:${customName}`;
                       const isChecked = activeTransportFilters.includes(filterKey);
                       return (
-                        <label
+                        <div
                           key={filterKey}
-                          className="flex items-center space-x-1.5 text-[11px] text-zinc-200 hover:text-white cursor-pointer py-0.5"
+                          onClick={() => onToggleTransportFilter(filterKey)}
+                          className="flex items-center space-x-2 text-[11px] text-zinc-200 hover:text-white cursor-pointer py-0.5 select-none"
                         >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => onToggleTransportFilter(filterKey)}
-                            className="accent-white rounded"
-                          />
+                          {isChecked ? (
+                            <div className="w-3.5 h-3.5 bg-white border border-white rounded-[2px] shrink-0" />
+                          ) : (
+                            <div className="w-3.5 h-3.5 bg-transparent border border-zinc-500 rounded-[2px] shrink-0" />
+                          )}
                           <span className="truncate font-medium">其他：{customName}</span>
-                        </label>
+                        </div>
                       );
                     })}
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Requirement 2: Sorting and Grouping Controls */}
+            <div className="pt-1 flex items-center justify-between text-[11px] text-zinc-400 border-t border-zinc-800/80 pt-2">
+              {/* Sort by option */}
+              <div className="flex items-center space-x-1.5">
+                <ArrowUpDown className="w-3 h-3 text-zinc-400" />
+                <select
+                  value={sortBy}
+                  onChange={(e) => onChangeSortBy(e.target.value as TrackSortOption)}
+                  className="bg-zinc-900 border border-zinc-800 text-zinc-200 text-[11px] rounded px-2 py-1 focus:outline-none [color-scheme:dark]"
+                >
+                  <option value="recorded_time">依記錄時間排序</option>
+                  <option value="import_time">依載入時間排序</option>
+                </select>
+              </div>
+
+              {/* Group by transport toggle */}
+              <button
+                type="button"
+                onClick={onToggleGroupByTransport}
+                className={`flex items-center space-x-1 px-2 py-1 rounded border text-[11px] transition-colors ${
+                  groupByTransport
+                    ? 'bg-white text-black border-white font-medium'
+                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                }`}
+                title="將不同交通工具種類的紀錄放在一起並以分隔線分開"
+              >
+                <FolderTree className="w-3 h-3" />
+                <span>交通分組</span>
+              </button>
             </div>
           </div>
         )}
@@ -420,10 +667,11 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
         {!isCollapsed && (
           <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-900/40 flex items-center justify-between text-[11px] text-zinc-400">
             <span>
-              已載入 {tracks.length} 份足跡 · {totalStats.distanceKm} km
+              顯示 {sortedTracks.length} 筆足跡
+              {filterMode === 'all' && ` · 總計 ${currentModeStats.distanceKm} km`}
             </span>
             {filterMode === 'single' && (
-              <span className="text-zinc-300 font-mono">點擊單一足跡切換</span>
+              <span className="text-zinc-300 font-mono">點選單一足跡聚焦</span>
             )}
           </div>
         )}
@@ -431,141 +679,43 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
         {/* Tracks Scrollable List */}
         {!isCollapsed ? (
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {tracks.length === 0 ? (
+            {sortedTracks.length === 0 ? (
               <div className="p-8 text-center border border-dashed border-zinc-800 rounded-xl space-y-3">
                 <Footprints className="w-8 h-8 text-zinc-600 mx-auto" />
                 <p className="text-xs text-zinc-400 leading-relaxed">
-                  目前尚未匯入任何 GPX 足跡
+                  {tracks.length === 0 ? '目前尚未匯入任何 GPX 足跡' : '符合當前篩選條件的足跡為 0 筆'}
                 </p>
-                <button
-                  type="button"
-                  onClick={onOpenImport}
-                  className="px-4 py-1.5 bg-white text-black hover:bg-zinc-200 text-xs font-semibold rounded-lg transition-colors"
-                >
-                  立即匯入 GPX
-                </button>
-              </div>
-            ) : (
-              tracks.map((track) => {
-                // Requirement 5: Selection highlight only exists when in 'single' mode
-                const isSelected = filterMode === 'single' && track.id === selectedTrackId;
-
-                // Transport filter matching
-                let isFilteredIn = false;
-                if (track.transportType === 'custom' && track.customTransportName?.trim()) {
-                  isFilteredIn =
-                    activeTransportFilters.includes(`custom:${track.customTransportName.trim()}`) ||
-                    activeTransportFilters.includes('custom');
-                } else {
-                  isFilteredIn = activeTransportFilters.includes(track.transportType);
-                }
-
-                return (
-                  <div
-                    key={track.id}
-                    onClick={() => {
-                      if (filterMode === 'single') {
-                        onSelectTrack(track.id);
-                      }
-                    }}
-                    className={`group relative p-3 rounded-lg border transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-zinc-900 border-white shadow-md'
-                        : !isFilteredIn
-                        ? 'bg-zinc-950/40 border-zinc-900 opacity-40 hover:opacity-75'
-                        : 'bg-zinc-900/40 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-900/70'
-                    }`}
+                {tracks.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={onOpenImport}
+                    className="px-4 py-1.5 bg-white text-black hover:bg-zinc-200 text-xs font-semibold rounded-lg transition-colors"
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start space-x-2.5 min-w-0">
-                        {/* Transport Icon */}
-                        <div className="w-6 h-6 rounded bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0 mt-0.5 text-zinc-200">
-                          {getTransportIcon(track.transportType)}
-                        </div>
-
-                        {/* Info */}
-                        <div className="min-w-0">
-                          <h4 className="text-xs font-semibold text-white truncate group-hover:text-zinc-100">
-                            {track.name}
-                          </h4>
-                          <div className="flex items-center space-x-2 text-[10px] text-zinc-400 mt-0.5">
-                            <span>{track.recordedDate}</span>
-                            <span>·</span>
-                            <span>{getTransportLabel(track)}</span>
-                          </div>
-                          <div className="text-[11px] font-mono text-zinc-300 mt-1">
-                            {(track.totalDistanceMeters / 1000).toFixed(2)} km
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Item Actions */}
-                      <div className="flex items-center space-x-1 shrink-0">
-                        {/* Visibility Toggle */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleTrackVisibility(track.id);
-                          }}
-                          title={track.visible ? '隱藏此足跡' : '顯示此足跡'}
-                          className={`p-1 rounded text-zinc-400 hover:text-white transition-colors ${
-                            track.visible ? 'text-zinc-300' : 'text-zinc-600'
-                          }`}
-                        >
-                          {track.visible ? (
-                            <Eye className="w-3.5 h-3.5" />
-                          ) : (
-                            <EyeOff className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-
-                        {/* Focus / Select */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (filterMode !== 'single') {
-                              onChangeFilterMode('single');
-                            }
-                            onSelectTrack(track.id);
-                          }}
-                          title="定位並查看此足跡"
-                          className="p-1 rounded text-zinc-400 hover:text-white transition-colors"
-                        >
-                          <Crosshair className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* Download GPX */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDownloadTrack(track);
-                          }}
-                          title="下載 GPX 檔案"
-                          className="p-1 rounded text-zinc-400 hover:text-white transition-colors"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </button>
-
-                        {/* Requirement 7: Safe in-UI delete trigger (no window.confirm block) */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setTrackPendingDelete(track);
-                          }}
-                          title="刪除"
-                          className="p-1 rounded text-zinc-500 hover:text-white transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                    立即匯入 GPX
+                  </button>
+                )}
+              </div>
+            ) : groupByTransport && groupedTracks ? (
+              /* Requirement 2: Render with transportation dividers */
+              groupedTracks.map((group) => (
+                <div key={group.label} className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between px-1 py-1 border-b border-zinc-800 text-[11px]">
+                    <div className="flex items-center space-x-1.5 font-semibold text-white">
+                      <span>{getTransportIcon(group.icon)}</span>
+                      <span>{group.label}</span>
+                      <span className="text-zinc-500 font-normal">({group.tracks.length} 筆)</span>
                     </div>
+                    <span className="text-zinc-400 font-mono text-[10px]">
+                      {(group.distanceMeters / 1000).toFixed(1)} km
+                    </span>
                   </div>
-                );
-              })
+                  <div className="space-y-2">
+                    {group.tracks.map((t) => renderTrackItem(t))}
+                  </div>
+                </div>
+              ))
+            ) : (
+              sortedTracks.map((t) => renderTrackItem(t))
             )}
           </div>
         ) : (
@@ -595,7 +745,7 @@ export const TrackListSidebar: React.FC<TrackListSidebarProps> = ({
         )}
       </div>
 
-      {/* Requirement 7: Safe in-UI Confirmation Dialog for Deleting Track */}
+      {/* Delete Confirmation Modal */}
       {trackPendingDelete && (
         <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm bg-zinc-950 border border-zinc-800 rounded-xl p-5 shadow-2xl text-zinc-100 space-y-4">

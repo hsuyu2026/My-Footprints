@@ -4,8 +4,8 @@
  */
 
 import React from 'react';
-import { Layers, X, Minus, Palette } from 'lucide-react';
-import { TRANSPORT_OPTIONS, TransportType, LineStyleMode } from '../types/footprint';
+import { Info, X, Minus, Palette } from 'lucide-react';
+import { TRANSPORT_OPTIONS, LineStyleMode } from '../types/footprint';
 
 interface LegendCardProps {
   isOpen: boolean;
@@ -26,11 +26,94 @@ export const LegendCard: React.FC<LegendCardProps> = ({
 }) => {
   if (!isOpen) return null;
 
+  const renderSampleLine = (opt: (typeof TRANSPORT_OPTIONS)[0], isFilteredIn: boolean) => {
+    if (lineStyleMode === 'monochrome_white') {
+      return (
+        <svg className="w-20 h-2.5 overflow-visible">
+          <line
+            x1="0"
+            y1="5"
+            x2="80"
+            y2="5"
+            stroke={isFilteredIn ? '#ffffff' : '#3f3f46'}
+            strokeWidth="3.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    }
+
+    if (opt.lineStyleType === 'blue_white') {
+      return (
+        <svg className="w-20 h-2.5 overflow-visible">
+          <line x1="0" y1="5" x2="80" y2="5" stroke="#ffffff" strokeWidth="4" />
+          <line
+            x1="0"
+            y1="5"
+            x2="80"
+            y2="5"
+            stroke={isFilteredIn ? '#2563eb' : '#3f3f46'}
+            strokeWidth="4"
+            strokeDasharray="8, 8"
+          />
+        </svg>
+      );
+    }
+
+    if (opt.lineStyleType === 'black_white') {
+      return (
+        <svg className="w-20 h-2.5 overflow-visible">
+          <line x1="0" y1="5" x2="80" y2="5" stroke="#ffffff" strokeWidth="4" />
+          <line
+            x1="0"
+            y1="5"
+            x2="80"
+            y2="5"
+            stroke={isFilteredIn ? '#000000' : '#3f3f46'}
+            strokeWidth="4"
+            strokeDasharray="8, 8"
+          />
+        </svg>
+      );
+    }
+
+    if (opt.lineStyleType === 'orange_white') {
+      return (
+        <svg className="w-20 h-2.5 overflow-visible">
+          <line x1="0" y1="5" x2="80" y2="5" stroke="#ffffff" strokeWidth="4" />
+          <line
+            x1="0"
+            y1="5"
+            x2="80"
+            y2="5"
+            stroke={isFilteredIn ? '#ea580c' : '#3f3f46'}
+            strokeWidth="4"
+            strokeDasharray="8, 8"
+          />
+        </svg>
+      );
+    }
+
+    return (
+      <svg className="w-20 h-2.5 overflow-visible">
+        <line
+          x1="0"
+          y1="5"
+          x2="80"
+          y2="5"
+          stroke={isFilteredIn ? opt.color : '#3f3f46'}
+          strokeWidth="3.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  };
+
   return (
     <div className="absolute bottom-6 right-4 z-[450] w-80 bg-zinc-950/95 border border-zinc-800 rounded-xl shadow-2xl backdrop-blur-md overflow-hidden text-zinc-100">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800 bg-zinc-900/60">
         <div className="flex items-center space-x-2">
-          <Layers className="w-3.5 h-3.5 text-zinc-300" />
+          <Info className="w-3.5 h-3.5 text-zinc-300" />
           <span className="text-xs font-semibold tracking-wide">地圖圖例說明</span>
         </div>
         <button
@@ -41,7 +124,7 @@ export const LegendCard: React.FC<LegendCardProps> = ({
         </button>
       </div>
 
-      <div className="p-3.5 space-y-3 max-h-84 overflow-y-auto text-xs">
+      <div className="p-3.5 space-y-3 max-h-88 overflow-y-auto text-xs">
         {/* Style Mode Switcher inside Legend */}
         <div className="bg-zinc-900/80 p-1.5 rounded-lg border border-zinc-800/80 space-y-1.5">
           <div className="text-[11px] text-zinc-400 font-medium">圖例與線段樣式</div>
@@ -56,7 +139,7 @@ export const LegendCard: React.FC<LegendCardProps> = ({
               }`}
             >
               <Minus className="w-3 h-3" />
-              <span>全白直線 (預設)</span>
+              <span>全白直線</span>
             </button>
             <button
               type="button"
@@ -67,7 +150,7 @@ export const LegendCard: React.FC<LegendCardProps> = ({
                   : 'text-zinc-400 hover:text-white'
               }`}
             >
-              <Palette className="w-3 h-3 text-cyan-500" />
+              <Palette className="w-3 h-3 text-cyan-400" />
               <span>交通分色直線</span>
             </button>
           </div>
@@ -93,12 +176,11 @@ export const LegendCard: React.FC<LegendCardProps> = ({
         {/* Transportation Line Styles */}
         <div className="border-t border-zinc-800/80 pt-2.5">
           <div className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider mb-2">
-            交通方式線條
+            交通方式線條樣式
           </div>
           <div className="space-y-2">
             {TRANSPORT_OPTIONS.filter((t) => t.type !== 'custom').map((opt) => {
               const isFilteredIn = activeTransportFilters.includes(opt.type);
-              const color = lineStyleMode === 'category_colors' ? opt.color : '#ffffff';
 
               return (
                 <div
@@ -107,19 +189,26 @@ export const LegendCard: React.FC<LegendCardProps> = ({
                     isFilteredIn ? 'text-zinc-200' : 'text-zinc-600'
                   }`}
                 >
-                  <span className="text-[11px] truncate">{opt.label}</span>
+                  <div className="flex items-center space-x-1.5 truncate">
+                    <span className="text-[11px] truncate">{opt.label}</span>
+                    {lineStyleMode === 'category_colors' && (
+                      <span className="text-[10px] text-zinc-400">
+                        {opt.type === 'walking' && '(淺綠)'}
+                        {opt.type === 'bicycle' && '(深綠)'}
+                        {opt.type === 'motorcycle' && '(淺藍)'}
+                        {opt.type === 'car' && '(深藍)'}
+                        {opt.type === 'bus' && '(亮橘)'}
+                        {opt.type === 'mrt' && '(藍白相間)'}
+                        {opt.type === 'light_rail' && '(淺棕)'}
+                        {opt.type === 'railway' && '(黑白相間)'}
+                        {opt.type === 'hsr' && '(橘白相間)'}
+                        {opt.type === 'plane' && '(紫色)'}
+                        {opt.type === 'ship' && '(紅色)'}
+                      </span>
+                    )}
+                  </div>
                   <div className="w-24 flex items-center justify-end">
-                    <svg className="w-20 h-2.5 overflow-visible">
-                      <line
-                        x1="0"
-                        y1="5"
-                        x2="80"
-                        y2="5"
-                        stroke={isFilteredIn ? color : '#3f3f46'}
-                        strokeWidth="3.5"
-                        strokeLinecap="round"
-                      />
-                    </svg>
+                    {renderSampleLine(opt, isFilteredIn)}
                   </div>
                 </div>
               );
@@ -129,7 +218,6 @@ export const LegendCard: React.FC<LegendCardProps> = ({
             {customTransportNames.map((customName) => {
               const filterKey = `custom:${customName}`;
               const isFilteredIn = activeTransportFilters.includes(filterKey);
-              const color = lineStyleMode === 'category_colors' ? '#eab308' : '#ffffff';
 
               return (
                 <div
@@ -146,7 +234,7 @@ export const LegendCard: React.FC<LegendCardProps> = ({
                         y1="5"
                         x2="80"
                         y2="5"
-                        stroke={isFilteredIn ? color : '#3f3f46'}
+                        stroke={isFilteredIn ? '#ffffff' : '#3f3f46'}
                         strokeWidth="3.5"
                         strokeLinecap="round"
                       />
